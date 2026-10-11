@@ -1,8 +1,8 @@
-﻿"""``load_coverage_for_repo(include_covered_lines=False)`` and the summary's
+"""``load_coverage_for_repo(include_covered_lines=False)`` and the summary's
 ``rows=`` hand-off.
 
-``covered_lines_json`` is most of what the coverage table stores â€” 467 KB of
-549 KB on this codebase â€” and only the single-file detail view reads it. The
+``covered_lines_json`` is most of what the coverage table stores — 467 KB of
+549 KB on this codebase — and only the single-file detail view reads it. The
 narrow read exists so the repo-wide callers stop hydrating it, and the rows it
 returns have to stay attribute-compatible with the entities they replace,
 because the serializers and the summary read them by name either way.
