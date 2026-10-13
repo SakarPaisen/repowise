@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from repowise.core.analysis.health.coverage import CoverageProvenance, TestCoverage
+from repowise.core.persistence.crud import covered_source_files as _covered_source_files
 from repowise.core.persistence.crud import (
     get_coverage_summary,
     load_coverage_for_repo,
@@ -326,3 +327,48 @@ async def test_summary_reports_mapping_partial_when_ingest_was_fragment(
     summary = await get_coverage_summary(async_session, r.id)
     assert summary["mapping_partial"] is True
     assert summary["file_count"] == 2
+
+
+async def test_covered_source_files_chunks_its_in_list(
+    monkeypatch, async_session, tmp_path
+) -> None:
+    """``covered_source_files`` issues its ``IN`` query in chunks, not one statement.
+
+    The sibling read chunks past SQLite's bound-parameter cap; this guards the
+    same fix here. The chunk size is lowered so a handful of files crosses the
+    boundary, and the executed statements are counted: a single statement for the
+    whole list means it was not chunked.
+    """
+    from repowise.core.persistence import batches
+
+    small = 4
+    monkeypatch.setattr(batches, "_IN_CLAUSE_CHUNK", small)
+
+    r = await upsert_repository(
+        async_session, name="chunked-covered", local_path=str(tmp_path)
+    )
+    total = small * 5 + 3
+    await save_test_coverage(
+        async_session,
+        r.id,
+        [
+            TestCoverage(test_id=f"t{i}", file_path=f"src/f{i:05d}.py", covered_lines=[1])
+            for i in range(0, total, 3)
+        ],
+        source_format="coverage.py",
+    )
+    await async_session.commit()
+
+    statements: list[str] = []
+    original_execute = async_session.execute
+
+    async def _counting_execute(statement, *args, **kwargs):
+        statements.append(str(statement))
+        return await original_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(async_session, "execute", _counting_execute)
+    wanted = {f"src/f{i:05d}.py" for i in range(total)}
+    await _covered_source_files(async_session, r.id, wanted)
+
+    selects = [s for s in statements if "source_file" in s]
+    assert len(selects) > 1, "the IN list was issued as one statement: " + repr(statements)

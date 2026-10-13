@@ -250,13 +250,19 @@ async def covered_source_files(
     """
     if not source_files:
         return set()
-    result = await session.execute(
-        select(TestCoverageEntry.source_file).where(
-            TestCoverageEntry.repository_id == repository_id,
-            TestCoverageEntry.source_file.in_(source_files),
+    # The `IN` list goes through chunked() for the same reason as
+    # tests_covering_many: SQLite caps bound parameters per statement, and a wide
+    # change set is exactly the case that reaches the cap.
+    covered: set[str] = set()
+    for piece in chunked(sorted(source_files)):
+        result = await session.execute(
+            select(TestCoverageEntry.source_file).where(
+                TestCoverageEntry.repository_id == repository_id,
+                TestCoverageEntry.source_file.in_(piece),
+            )
         )
-    )
-    return {row[0] for row in result.all()}
+        covered.update(row[0] for row in result.all())
+    return covered
 
 
 async def files_covered_by(
